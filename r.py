@@ -1,4 +1,3 @@
-# echo > rmc.py; vim rmc.py; python rmc.py
 # %%snakeviz
 # %load_ext snakeviz
 # ln -s /home/splunker/splunk_fdse /bin/splunk_fdse
@@ -10,6 +9,7 @@ import time
 import socket
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+TIME_EXEC = int(time.time())
 
 ENV = "FDSE" # "SS_TEST" # or SPLUNK or SS_TEST, SS_DEV, SS_PROD
 
@@ -97,7 +97,7 @@ cmds = {
 
 
 def l(msg):
-    print(f'{msg}')
+    print('{}'.format(msg))
 
 
 def run_cmd(cmd):
@@ -123,16 +123,17 @@ def ss(msg, sourcetype):
     try:
         event = json.loads(msg.strip())
     except Exception as e:
-        print("e: {}".format(e))
         event = str(msg)
         if "}" in msg:
             return
+        else:
+            print("e: {}".format(e))
         sourcetype = "log"
         pass
     
     try:
         payload = json.dumps({
-          "time": int(time.time()),
+          "time": TIME_EXEC,
           "sourcetype": "refinitiv:{}".format(sourcetype),
           "source": "refinitiv",
           "host": socket.gethostname(),
@@ -204,7 +205,8 @@ for s in shm:
     
     try:
         process_name = comp['process'][2:5].lower().strip()
-        if process_name in ['ads','adh', 'ats', 'dac']:
+        key_decimal = comp["key_decimal"] 
+        if process_name in ['ads','adh', 'ats', 'dac'] and key_decimal < 5000:
             # SEND TO HEC
             
             l(cb) # refinitiv:ipc
@@ -215,7 +217,7 @@ for s in shm:
             for cmd in cmds:
                 print("cmd: {}".format(cmd))
         else:
-            ss("Refinitiv Debug: {}".format(e), "log:extra_ipc")
+            ss("Refinitiv Debug: {} - {}".format(process_name, comp), "log:extra_ipc")
     
     except Exception as e:
         ss("Refinitiv Exception: {}".format(e), "error:cmd")
