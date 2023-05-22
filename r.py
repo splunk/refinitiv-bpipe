@@ -11,9 +11,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 TIME_EXEC = int(time.time())
 
-ENV = "FDSE" # "SS_TEST" # or SPLUNK or SS_TEST, SS_DEV, SS_PROD
-
-ALLOW_LIST = ["ads", "adh", "ats"] # ["ads", "adh","ats", "dacs"]
+ENV = "SS_TEST" # "SS_TEST" # or SPLUNK or SS_TEST, SS_DEV, SS_PROD
 
 
 
@@ -45,7 +43,10 @@ else:
     index = "main"
     BIN_FILE = "splunk_fdse"
 
-    
+
+TIMEOUT = 8
+CURRENT_HOST_NAME = socket.gethostname()
+
 # ipc commands
 cmd_ipc_human = """ipcs -m --human | grep -v "shm" | grep -v "\-\-\-" | awk 'NF > 0'  | awk '{print $1,$2,$3,$4,$5,$6}'  """
 cmd_ipc_shm_creator_last_opened = """ipcs -m -p | grep -v "shm" | grep -v "\-\-\-" | awk 'NF > 0' | awk '{print $1,$2,$3,$4}' """
@@ -64,31 +65,43 @@ tied_processes_mem = "ps -p {} -o %mem --no-headers"
 
 # EXHAUSTIVE PROD
 cmds = {
-    "dacs|1427": 
-        [
-            "ManagedProcess.DacsTrans|dacs_TransInfo",
-            "DacsSnkd|dacs_SnkdInfo",
-            "Configs|dacs_configs",
-        ],
-    "ats|60":
+"dac": 
     [
-        "ManagedProcess.ATS|ats_info",
-        "ShmemMOServerStats|ats_memory", #
+        "rrcp_trans", # dacs_TransInfo
+        "dacs_trans.dacs.snkd.SnkdFrmSvr", # dacs_SnkdInfo
+        "dacs_trans.dacs.snkd", # dacs_SnkdInfo
+        "dacs_trans.dacs_svr", # dacs_configs
+        "dacs_trans.dacs_svr.Systems", # dacs SrvInfo
+        "dacs_trans.dacs_svr.Sizes" # dacs SrvSizes
     ],
-    "adh|80": [
-        "ManagedProcess|adh_info"
-    ],
+"ats":
+[
+    "ats.server statistics.statistic current hour", # ats stats
+    "ats.server statistic.dictionary statistic", # BU
+    "ats.memorystats", # Memory
+    "ats.license information",  # LICENSE
+    "ats.license information.number_of_open_items" # License#ofOpenItems => featurevalue 
+],
+"adh": [
+    "adh.rrmpconsumer", # services
+    "adh", # adh_info
+    "adh.trlsManager", # adh_info
+    "adh.serviceGenerator.srcPrdServicePool", #ComInfo1 (ComInfo is in ADHMON)
     
-    "ads|82":
-    [
-        "ConsumerDb.SinkDist|activeUsers",
-        "ManagedProcess.SinkDist|SinkDist",
-        "Service|Service",
-        "ServerAttributes|ServerAttributes",
-        "RIPCServer|RIPCServer",
-        "RIPCClient|RIPCClient",
-        "ServerAttributes.SinkDist|SinkDist",
-    ]
+    
+],
+
+"ads":
+[
+    "ads.dacs", # ads info
+    "ads", # ads info
+    "ads.trlsManager", # ads info
+    "ads.servicedb", # ads Server
+    "ads.itermdatabase", # ads Services
+    "ads.userDatabase", # ads user + ads mounts
+    "ads.userdatabase.userrequests" # TITLE
+    
+]
 }
 
 
@@ -121,22 +134,23 @@ def ss(msg, sourcetype):
 
     
     try:
-        event = json.loads(msg.strip())
+        if isinstance(msg, str):
+            event = json.loads(msg.strip())
+            sourcetype = event['instanceId']
+            # del event['instanceId']
+        
     except Exception as e:
         event = str(msg)
-        if "}" in msg:
-            return
-        else:
-            print("e: {}".format(e))
+        # print("e: {}".format(e)) #### 
         sourcetype = "log"
-        pass
+        ## pass
     
     try:
         payload = json.dumps({
           "time": TIME_EXEC,
           "sourcetype": "refinitiv:{}".format(sourcetype),
           "source": "refinitiv",
-          "host": socket.gethostname(),
+          "host": CURRENT_HOST_NAME,
           "index": index,
           "event": event
         }, indent=2)
@@ -150,7 +164,7 @@ def ss(msg, sourcetype):
         if response.status_code not in range (200,301):
             print(response.text)
     except Exception as e:
-        print(e)
+        # print(e)
         # ss(e, "error:hec")
     
     print(msg)
@@ -196,9 +210,50 @@ for ipc in ipc_clo.split("\n"):
         shm[shmid]["memory_perc"] = run_cmd(tied_processes_mem.format(pid))        
 
 
+## Call to C binary
+def async_exec(key, component, cmd_arg):
+    CUT_START = "Start output data"
+    CLEAN_DATA = '(Apply filter)'
+
+    try:
+        # run c code : splunk_fdse
+        final_cmd = 'timeout {} {} {} \"{}\"'.format(TIMEOUT, BIN_FILE, key, cmd_arg)
+        stdout = run_cmd(final_cmd)
+        print ("== final_cmd: {}\n\n".format(final_cmd))
+        # print ("== event {} \n== event end".format(stdout))
+        # break ##################
+        # print(stdout)
+        ####
+        try:
+            # process event
+            events = stdout.split(CUT_START)[1].replace(CLEAN_DATA,'').split("},")
+            # print (events)
+            for event in events:
+                se = event + "}"
+                se = se.replace('"\n', '",\n').replace(',\n}','}')  ###### DICT OUT IS NOT VALID JSON
+
+                ## SEND TO SPLUNK
+                # ss(se, "{}:{}".format(component, cmd_arg))
+                # print(se)
+                
+                if "!!!!!!!!!!!!" in se:
+                    se = se.split('filter list')[-1]
+                    # print(se)
+                ss(se, component)
+
+                # break ###########################
+        except Exception as e:
+                ss(e, "error:process_event")
+                pass
+    except Exception as e:
+            ss(e, "error:cmd")
+
+            
+## MAIN ()
+
 ## PROCESS IPC SHM Entries
 for s in shm:
-    l(s)
+    # l(s)
     comp = shm[s]
     
     cb = json.dumps(comp,indent=2)
@@ -209,13 +264,23 @@ for s in shm:
         if process_name in ['ads','adh', 'ats', 'dac'] and key_decimal < 5000:
             # SEND TO HEC
             
-            l(cb) # refinitiv:ipc
-            l("{}|{}".format(process_name, comp['key_decimal'] ))   # ads|82
+            # l(cb) # refinitiv:ipc
+            ss(cb, "ipc")
+            # l("{}|{}".format(process_name, comp['key_decimal'] ))   # ads|82
             
+            
+            QUERY_ARG = ",{}.1.".format(CURRENT_HOST_NAME).join(cmds[process_name])
+            QUERY_ARG = "{}.1.{}".format(CURRENT_HOST_NAME,QUERY_ARG )
+            
+            
+            async_exec(key_decimal, process_name, QUERY_ARG  )
             ## EXEC splk_fdse_2 | stdout
-            
-            for cmd in cmds:
-                print("cmd: {}".format(cmd))
+            # COMBINE ARRAY?
+            # QUERY_ARG = ",".join(cmds[process_name])
+            # print(QUERY_ARG)
+
+                
+
         else:
             ss("Refinitiv Debug: {} - {}".format(process_name, comp), "log:extra_ipc")
     
@@ -225,54 +290,5 @@ for s in shm:
         
 
 
-
-        
-# Iterate through commands
-for cmd in cmds:
-    break #####
-    print("cmd: {}".format(cmd))
-    comp_name, key = cmd.split("|")
-    
-    # ONLY PROCESS COMPONENTS THAT EXIST ON THE SERVER
-    if comp_name not in ALLOW_LIST:
-        continue
-    
-    
-
-    for c in cmds[cmd]:
-        print("c: {}".format(c))
-        cr = c.split("|")
-        cmd_arg = cr[0]
-        cmd_query = cr[1]
-        try:
-            # run c code : splunk_fdse
-            final_cmd = 'timeout 5 {} {} \"{}\"'.format(BIN_FILE, key, cmd_arg)
-            stdout = run_cmd(final_cmd)
-            print ("== final_cmd: {}\n\n".format(final_cmd))
-            # print ("== event {} \n== event end".format(stdout))
-            # break
-            ####
-            # print(stdout)
-            ####
-            try:
-                # process event
-                events = stdout.split("Start output data")[1].replace('(Apply filter)','').split("},")
-                # print (events)
-                for event in events:
-                    se = event + "}"
-                    se = se.replace('"\n', '",\n').replace(',\n}','}')  ###### DICT OUT IS NOT VALID JSON
-
-                    ss(se, "{}:{}".format(cmd, cmd_arg))
-                    
-                    ####
-                    # break
-                    ####
-            except Exception as e:
-                    ss(e, "error:process_event")
-                    pass
-        except Exception as e:
-                ss(e, "error:cmd")
-                
-                
                 
 
