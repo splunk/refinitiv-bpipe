@@ -164,10 +164,12 @@ def ss(msg, sourcetype):
         if response.status_code not in range (200,301):
             print(response.text)
     except Exception as e:
+        pass
         # print(e)
         # ss(e, "error:hec")
     
-    print(msg)
+    #print(msg)
+    return
 
 
 
