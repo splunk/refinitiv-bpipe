@@ -221,7 +221,7 @@ def async_exec(key, component, cmd_arg):
         # run c code : splunk_fdse
         final_cmd = 'timeout {} {} {} \"{}\"'.format(TIMEOUT, BIN_FILE, key, cmd_arg)
         stdout = run_cmd(final_cmd)
-        print ("== final_cmd: {}\n\n".format(final_cmd))
+        # print ("== final_cmd: {}\n\n".format(final_cmd))
         # print ("== event {} \n== event end".format(stdout))
         # break ##################
         # print(stdout)
@@ -254,6 +254,8 @@ def async_exec(key, component, cmd_arg):
 ## MAIN ()
 
 ## PROCESS IPC SHM Entries
+
+print("=== Splunk FDSE : Refinitiv ===")
 for s in shm:
     # l(s)
     comp = shm[s]
