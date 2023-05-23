@@ -1,9 +1,9 @@
 # %%snakeviz
 # %load_ext snakeviz
 # ln -s /home/splunker/splunk_fdse /bin/splunk_fdse
-# echo > rmc.py; vi rmc.py; python rmc.py
 
 import json
+# import yaml
 import os
 import requests
 import time   
@@ -13,7 +13,7 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 TIME_EXEC = int(time.time())
 
 ENV = "SS_TEST" # "SS_TEST" # or SPLUNK or SS_TEST, SS_DEV, SS_PROD
-
+APP_LOCATION = "/usr/local/gov/splunk/splunkforwarder/etc/apps/ss_refinitiv_clients_dev_na_app"
 
 
 if ENV == "SS_TEST":
@@ -29,12 +29,14 @@ elif ENV == "SS_DEV":
     port = "443"
     token = "1209e507-6818-4cae-a6d9-b7d12a448371"
     index = "application_logs"
+    BIN_FILE = "{}/bin/splunk_fdse".format(APP_LOCATION)
 elif ENV == "SS_PROD":
     proto = "https"
     host = "gov-data.statestr.com"
     port = "443"
     token = "1209e507-6818-4cae-a6d9-b7d12a448371"
     index = "application_logs"
+    BIN_FILE = "{}/bin/splunk_fdse".format(APP_LOCATION)
 else:
     # FDSE.splunk.link
     proto = "https"
@@ -45,7 +47,7 @@ else:
     BIN_FILE = "splunk_fdse"
 
 
-TIMEOUT = 8
+TIMEOUT = 9
 CURRENT_HOST_NAME = socket.gethostname()
 
 # ipc commands
@@ -89,8 +91,6 @@ cmds = {
     "adh", # adh_info
     "adh.trlsManager", # adh_info
     "adh.serviceGenerator.srcPrdServicePool", #ComInfo1 (ComInfo is in ADHMON)
-    
-    
 ],
 "ads":
 [
@@ -103,6 +103,21 @@ cmds = {
     "ads.userdatabase.userrequests" # TITLE
 ]
 }
+
+
+## *TODO* YAML based Loading
+def read_file(file_abs_path, isY=False):
+    with open(file_abs_path, "r") as stream:
+        try:
+            if isY is True:
+                return(yaml.safe_load(stream))
+            else:
+                return stream
+        except yaml.YAMLError as exc:
+            print(exc)
+
+
+## print(read_file("{}/bin/rmc.yaml".format(APP_LOCATION), isY=True))
 
 
 
