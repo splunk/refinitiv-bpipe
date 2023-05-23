@@ -1,8 +1,6 @@
 # %%snakeviz
 # %load_ext snakeviz
 # ln -s /home/splunker/splunk_fdse /bin/splunk_fdse
-####
-####
 
 import json
 import os
@@ -54,7 +52,7 @@ cmd_ipc_human = """ipcs -m --human | grep -v "shm" | grep -v "\-\-\-" | awk 'NF 
 cmd_ipc_shm_creator_last_opened = """ipcs -m -p | grep -v "shm" | grep -v "\-\-\-" | awk 'NF > 0' | awk '{print $1,$2,$3,$4}' """
 
 # pids comes from ipc
-tied_processes_cmd = "ps -p {} -o cmd --no-headers"
+tied_processes_cmd = "ls -l /proc/{}/exe"
 tied_processes_cpu = "ps -p {} -o %cpu --no-headers"
 tied_processes_mem = "ps -p {} -o %mem --no-headers"
 
@@ -66,8 +64,9 @@ tied_processes_mem = "ps -p {} -o %mem --no-headers"
 # ads: 82
 
 # EXHAUSTIVE PROD
+RMC_PROCESS_LIST = ['ads','adh', 'ats', 'ans'] # 'dacs' = ans
 cmds = {
-"dac": 
+"ans":  # dacs_trans = nkd = dacs
     [
         "rrcp_trans", # dacs_TransInfo
         "dacs_trans.dacs.snkd.SnkdFrmSvr", # dacs_SnkdInfo
@@ -109,6 +108,9 @@ cmds = {
 
 
 
+
+def pp(msg):
+    print(json.dumps(msg, indent=4))
 
 
 def l(msg):
@@ -265,9 +267,9 @@ for s in shm:
     cb = json.dumps(comp,indent=2)
     
     try:
-        process_name = comp['process'][2:5].lower().strip()
+        process_name = comp['process'].lower().strip()[-3:]
         key_decimal = comp["key_decimal"] 
-        if process_name in ['ads','adh', 'ats', 'dac'] and key_decimal < 5000:
+        if process_name in RMC_PROCESS_LIST and key_decimal < 5000:
             # SEND TO HEC
             
             # l(cb) # refinitiv:ipc
