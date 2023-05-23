@@ -1,6 +1,8 @@
 # %%snakeviz
 # %load_ext snakeviz
 # ln -s /home/splunker/splunk_fdse /bin/splunk_fdse
+# echo > r.py; vi r.py; python r.py
+
 
 import json
 # import yaml
@@ -110,7 +112,7 @@ def read_file(file_abs_path, isY=False):
     with open(file_abs_path, "r") as stream:
         try:
             if isY is True:
-                return(yaml.safe_load(stream))
+                return yaml.safe_load(stream)
             else:
                 return stream
         except yaml.YAMLError as exc:
@@ -259,7 +261,7 @@ def async_exec(key, component, cmd_arg):
             
 ## MAIN ()
 ## PROCESS IPC SHM Entries
-print("=== Splunk FDSE : Refinitiv ===")
+print("=== Splunk FDSE : Refinitiv Parser ===")
 for s in shm:
     # l(s)
     comp = shm[s]
