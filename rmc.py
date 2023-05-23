@@ -1,6 +1,7 @@
 # %%snakeviz
 # %load_ext snakeviz
 # ln -s /home/splunker/splunk_fdse /bin/splunk_fdse
+# echo > rmc.py; vi rmc.py; python rmc.py
 
 import json
 import os
@@ -91,7 +92,6 @@ cmds = {
     
     
 ],
-
 "ads":
 [
     "ads.dacs", # ads info
@@ -101,7 +101,6 @@ cmds = {
     "ads.itermdatabase", # ads Services
     "ads.userDatabase", # ads user + ads mounts
     "ads.userdatabase.userrequests" # TITLE
-    
 ]
 }
 
@@ -126,7 +125,6 @@ def run_cmd(cmd):
 def cuts(msg, start, end):
     # text = 'gfgfdAAA1234ZZZuijjk'
     #cuts(text,"AA","ZZ")
-
     try:
         return msg.partition(start)[2].partition(end)[0]
     except Exception as e:
@@ -135,20 +133,16 @@ def cuts(msg, start, end):
     
 def ss(msg, sourcetype):
     url = "{}://{}:{}/services/collector/event".format(proto, host, port)
-
-    
     try:
         if isinstance(msg, str):
             event = json.loads(msg.strip())
             sourcetype = event['instanceId']
             # del event['instanceId']
-        
     except Exception as e:
         event = str(msg)
         # print("e: {}".format(e)) #### 
         sourcetype = "log"
         ## pass
-    
     try:
         payload = json.dumps({
           "time": TIME_EXEC,
@@ -163,7 +157,6 @@ def ss(msg, sourcetype):
           'Authorization': 'Splunk {}'.format(token),
           'Content-Type': 'application/json'
         }
-
         response = requests.request("POST", url, headers=headers, data=payload, verify=False)
         if response.status_code not in range (200,301):
             print(response.text)
@@ -171,7 +164,6 @@ def ss(msg, sourcetype):
         pass
         # print(e)
         # ss(e, "error:hec")
-    
     #print(msg)
     return
 
@@ -207,7 +199,6 @@ for ipc in ipc_clo.split("\n"):
         pid = field[2]
         lpid = field[3]
         shmid = field[0]
-        
         shm[shmid]["key_decimal"] = int(shm[shmid]["key_hex"], 16)# int(hex_s, 16)
         shm[shmid]["pid_creator"] = pid
         shm[shmid]["pid_lastacessed"] = lpid
@@ -220,7 +211,6 @@ for ipc in ipc_clo.split("\n"):
 def async_exec(key, component, cmd_arg):
     CUT_START = "Start output data"
     CLEAN_DATA = '(Apply filter)'
-
     try:
         # run c code : splunk_fdse
         final_cmd = 'timeout {} {} {} \"{}\"'.format(TIMEOUT, BIN_FILE, key, cmd_arg)
@@ -237,16 +227,13 @@ def async_exec(key, component, cmd_arg):
             for event in events:
                 se = event + "}"
                 se = se.replace('"\n', '",\n').replace(',\n}','}')  ###### DICT OUT IS NOT VALID JSON
-
                 ## SEND TO SPLUNK
                 # ss(se, "{}:{}".format(component, cmd_arg))
                 # print(se)
-                
                 if "!!!!!!!!!!!!" in se:
                     se = se.split('filter list')[-1]
                     # print(se)
                 ss(se, component)
-
                 # break ###########################
         except Exception as e:
                 ss(e, "error:process_event")
@@ -256,42 +243,29 @@ def async_exec(key, component, cmd_arg):
 
             
 ## MAIN ()
-
 ## PROCESS IPC SHM Entries
-
 print("=== Splunk FDSE : Refinitiv ===")
 for s in shm:
     # l(s)
     comp = shm[s]
-    
     cb = json.dumps(comp,indent=2)
-    
     try:
         process_name = comp['process'].lower().strip()[-3:]
         key_decimal = comp["key_decimal"] 
         if process_name in RMC_PROCESS_LIST and key_decimal < 5000:
             # SEND TO HEC
-            
             # l(cb) # refinitiv:ipc
             ss(cb, "ipc")
             # l("{}|{}".format(process_name, comp['key_decimal'] ))   # ads|82
-            
-            
             QUERY_ARG = ",{}.1.".format(CURRENT_HOST_NAME).join(cmds[process_name])
             QUERY_ARG = "{}.1.{}".format(CURRENT_HOST_NAME,QUERY_ARG )
-            
-            
             async_exec(key_decimal, process_name, QUERY_ARG  )
             ## EXEC splk_fdse_2 | stdout
             # COMBINE ARRAY?
             # QUERY_ARG = ",".join(cmds[process_name])
             # print(QUERY_ARG)
-
-                
-
         else:
             ss("Refinitiv Debug: {} - {}".format(process_name, comp), "log:extra_ipc")
-    
     except Exception as e:
         ss("Refinitiv Exception: {}".format(e), "error:cmd")
         pass
