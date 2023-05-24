@@ -5,7 +5,7 @@
 
 
 import json
-# import yaml
+import yaml
 import os
 import requests
 import time   
@@ -14,6 +14,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 TIME_EXEC = int(time.time())
 
+DEBUG = True
 ENV = "SS_TEST" # "SS_TEST" # or SPLUNK or SS_TEST, SS_DEV, SS_PROD
 APP_LOCATION = "/usr/local/gov/splunk/splunkforwarder/etc/apps/ss_refinitiv_clients_dev_na_app"
 
@@ -46,11 +47,18 @@ else:
     token = "d43715d0-282e-4b6b-92d6-d231ddd04616"
     port = "8088"
     index = "main"
-    BIN_FILE = "splunk_fdse"
+    BIN_FILE = "/opt/reuters/SOFTWARE/ads3.6.3.L1.linux.rrg/bin/monitorRoots_NO_STL_v5"
 
 
 TIMEOUT = 9
 CURRENT_HOST_NAME = socket.gethostname()
+PAYLOAD = {
+  "time": TIME_EXEC,
+  "source": "refinitiv",
+  "host": CURRENT_HOST_NAME,
+  "index": index
+}
+
 
 # ipc commands
 cmd_ipc_human = """ipcs -m --human | grep -v "shm" | grep -v "\-\-\-" | awk 'NF > 0'  | awk '{print $1,$2,$3,$4,$5,$6}'  """
@@ -108,13 +116,13 @@ cmds = {
 
 
 ## *TODO* YAML based Loading
-def read_file(file_abs_path, isY=False):
+def read_file(file_abs_path, isYML=False):
     with open(file_abs_path, "r") as stream:
         try:
-            if isY is True:
+            if isYML is True:
                 return yaml.safe_load(stream)
             else:
-                return stream
+                return stream.read()
         except yaml.YAMLError as exc:
             print(exc)
 
@@ -122,7 +130,37 @@ def read_file(file_abs_path, isY=False):
 ## print(read_file("{}/bin/rmc.yaml".format(APP_LOCATION), isY=True))
 
 
+# stdout CLEAN UP
+def parser(inp):
+    e_list = []
+    events = inp.split("{\n    \"")[1:]
+    for event in events:
+        try:
+            e_list.append( "\n{{\"{}".format(event.replace(',\n}','}').replace('\n"','"')).strip()[:-1] )
+        except:
+            pass
+    return e_list
 
+def payload_builder(list_of_events):
+    
+    payload_list = []
+    
+    for event in list_of_events:
+        tmp_payload = PAYLOAD
+        try:
+            event_dict = json.loads(event)
+            tmp_payload["sourcetype"] = "refinitiv:{}".format(event_dict['instanceId'])
+            tmp_payload['event'] = event_dict
+        except Exception as e:
+            tmp_payload["sourcetype"] = "refinitiv:unparsed_events"
+            tmp_payload['event'] = event
+            # SEND as NORMAL EVENT
+            if DEBUG is True:
+                print("e: {}".format(e))
+        finally:
+            payload_list.append( json.dumps(tmp_payload)) 
+    
+    return payload_list
 
 
 def pp(msg):
@@ -134,8 +172,11 @@ def l(msg):
 
 
 def run_cmd(cmd):
-    return os.popen(cmd).read().strip()
-
+    try:
+        return os.popen(cmd).read().strip()
+    except:
+        return ""
+        pass
 
 
 
@@ -147,34 +188,28 @@ def cuts(msg, start, end):
     except Exception as e:
         ss(e, "error:cuts")
     
-    
-def ss(msg, sourcetype):
+# Send to Splunk (Send to StateStreet)
+def ss(stdout, sourcetype="default", isBulk=False):
     url = "{}://{}:{}/services/collector/event".format(proto, host, port)
+    tmp_payload = ""
     try:
-        if isinstance(msg, str):
-            event = json.loads(msg.strip())
-            sourcetype = event['instanceId']
-            # del event['instanceId']
+        # BULK Event
+        if isBulk is True:
+            tmp_payload = "\n".join(payload_builder(parser(stdout)))
+        else:
+            tmp_payload = PAYLOAD.copy()
+            tmp_payload["sourcetype"] = "refinitiv:{}".format(sourcetype)
+            tmp_payload["event"] = stdout
+            tmp_payload = json.dumps(tmp_payload)
     except Exception as e:
-        event = str(msg)
-        # print("e: {}".format(e)) #### 
-        sourcetype = "log"
-        ## pass
+        print("e: {}".format(e))
+
     try:
-        payload = json.dumps({
-          "time": TIME_EXEC,
-          "sourcetype": "refinitiv:{}".format(sourcetype),
-          "source": "refinitiv",
-          "host": CURRENT_HOST_NAME,
-          "index": index,
-          "event": event
-        }, indent=2)
-        
         headers = {
           'Authorization': 'Splunk {}'.format(token),
           'Content-Type': 'application/json'
         }
-        response = requests.request("POST", url, headers=headers, data=payload, verify=False)
+        response = requests.request("POST", url, headers=headers, data=tmp_payload, verify=False)
         if response.status_code not in range (200,301):
             print(response.text)
     except Exception as e:
@@ -183,9 +218,6 @@ def ss(msg, sourcetype):
         # ss(e, "error:hec")
     #print(msg)
     return
-
-
-
 
 
 
@@ -226,67 +258,56 @@ for ipc in ipc_clo.split("\n"):
 
 ## Call to C binary
 def async_exec(key, component, cmd_arg):
-    CUT_START = "Start output data"
-    CLEAN_DATA = '(Apply filter)'
     try:
         # run c code : splunk_fdse
         final_cmd = 'timeout {} {} {} \"{}\"'.format(TIMEOUT, BIN_FILE, key, cmd_arg)
         stdout = run_cmd(final_cmd)
-        # print ("== final_cmd: {}\n\n".format(final_cmd))
-        # print ("== event {} \n== event end".format(stdout))
-        # break ##################
-        # print(stdout)
-        ####
+        if DEBUG is True:
+            print ("== final_cmd: {}\n\n".format(final_cmd))
+            print ("== event {} \n== event end".format(stdout))
+            print(stdout)
         try:
             # process event
-            events = stdout.split(CUT_START)[1].replace(CLEAN_DATA,'').split("},")
-            # print (events)
-            for event in events:
-                se = event + "}"
-                se = se.replace('"\n', '",\n').replace(',\n}','}')  ###### DICT OUT IS NOT VALID JSON
-                ## SEND TO SPLUNK
-                # ss(se, "{}:{}".format(component, cmd_arg))
-                # print(se)
-                if "!!!!!!!!!!!!" in se:
-                    se = se.split('filter list')[-1]
-                    # print(se)
-                ss(se, component)
-                # break ###########################
+            ss(stdout, sourcetype=component, isBulk=True)
+            # break ###########################
         except Exception as e:
-                ss(e, "error:process_event")
+                ss(e, sourcetype="error:process_event")
                 pass
     except Exception as e:
             ss(e, "error:cmd")
 
             
-## MAIN ()
-## PROCESS IPC SHM Entries
-print("=== Splunk FDSE : Refinitiv Parser ===")
-for s in shm:
-    # l(s)
-    comp = shm[s]
-    cb = json.dumps(comp,indent=2)
-    try:
-        process_name = comp['process'].lower().strip()[-3:]
-        key_decimal = comp["key_decimal"] 
-        if process_name in RMC_PROCESS_LIST and key_decimal < 5000:
-            # SEND TO HEC
-            # l(cb) # refinitiv:ipc
-            ss(cb, "ipc")
-            # l("{}|{}".format(process_name, comp['key_decimal'] ))   # ads|82
-            QUERY_ARG = ",{}.1.".format(CURRENT_HOST_NAME).join(cmds[process_name])
-            QUERY_ARG = "{}.1.{}".format(CURRENT_HOST_NAME,QUERY_ARG )
-            async_exec(key_decimal, process_name, QUERY_ARG  )
-            ## EXEC splk_fdse_2 | stdout
-            # COMBINE ARRAY?
-            # QUERY_ARG = ",".join(cmds[process_name])
-            # print(QUERY_ARG)
-        else:
-            ss("Refinitiv Debug: {} - {}".format(process_name, comp), "log:extra_ipc")
-    except Exception as e:
-        ss("Refinitiv Exception: {}".format(e), "error:cmd")
-        pass
-        
+
+def run():
+    ## MAIN ()
+    ## PROCESS IPC SHM Entries
+    print("=== Splunk FDSE : Refinitiv Parser ===")
+    for s in shm:
+        # l(s)
+        comp = shm[s]
+        try:
+            process_name = comp['process'].lower().strip()[-3:]
+            key_decimal = comp["key_decimal"] 
+            if process_name in RMC_PROCESS_LIST and key_decimal < 5000:
+                # SEND TO HEC
+                # l(cb) # refinitiv:ipc
+                ss(comp, "ipc")
+                # l("{}|{}".format(process_name, comp['key_decimal'] ))   # ads|82
+                QUERY_ARG = ",{}.1.".format(CURRENT_HOST_NAME).join(cmds[process_name])
+                QUERY_ARG = "{}.1.{}".format(CURRENT_HOST_NAME,QUERY_ARG )
+                async_exec(key_decimal, process_name, QUERY_ARG  )
+                ## EXEC splk_fdse_2 | stdout
+                # COMBINE ARRAY?
+                # QUERY_ARG = ",".join(cmds[process_name])
+                # print(QUERY_ARG)
+            else:
+                ss("Refinitiv Debug: {} - {}".format(process_name, comp), "log:extra_ipc")
+        except Exception as e:
+            ss("Refinitiv Exception: {}".format(e), "error:cmd")
+            pass
+
+
+run()                
 
 
                 
